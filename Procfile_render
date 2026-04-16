@@ -1,0 +1,1 @@
+web: gunicorn dash_app_render_ready:server --workers 2
