@@ -1,5 +1,5 @@
 """
-FMoH Use Case Prioritization Dashboard
+FMoH use case prioritisation dashboard
 Compares scores across groups for use cases on 5 criteria.
 Run with: python dash_app_render_ready.py
 """
@@ -17,7 +17,7 @@ import dash
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from dash import ALL, Input, Output, State, dcc, html
+from dash import Input, Output, dcc, html
 from flask import Response, request
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -39,6 +39,7 @@ SCORE_COLS = [
     "Feasibility",
     "Capacity Building",
 ]
+RADAR_ROTATION_DEGREES = 144
 
 INPUT_COLS = [
     "Partner/Office",
@@ -70,11 +71,11 @@ GROUP_COLOURS = {
     "Group 2":  "#FCDD09",
     "Group 3":  "#DA121A",
     "Group 4":  "#0F47AF",
-    "Group 5":  "#1A1A1A",
+    "Group 5":  "#8E44AD",
     "Group 6":  "#E67E22",
-    "Group 7":  "#8E44AD",
+    "Group 7":  "#C0392B",
     "Group 8":  "#16A085",
-    "Group 9":  "#C0392B",
+    "Group 9":  "#1A1A1A",
     "Group 10": "#2C3E50",
 }
 LIGHT_BG_GROUPS = {"Group 2"}
@@ -83,7 +84,7 @@ DEFAULT_LAN_PORT = 8080
 
 def build_parser():
     parser = __import__("argparse").ArgumentParser(
-        description="FMoH Use Case Prioritization Dashboard"
+        description="FMoH use case prioritisation dashboard"
     )
     parser.add_argument("--data_dir", "-d", default=os.path.dirname(__file__),
                         help="Directory containing group xlsx files (default: script directory)")
@@ -137,7 +138,7 @@ DATA_DIR = _args.data_dir
 # Logo
 # ---------------------------------------------------------------------------
 
-_LOGO_PATH = "/home/tristan/Pictures/EDAM_logos/combined.png"
+_LOGO_PATH = os.path.join(os.path.dirname(__file__), "combined_v2.png")
 LOGO_SRC = None
 if os.path.exists(_LOGO_PATH):
     with open(_LOGO_PATH, "rb") as _f:
@@ -147,24 +148,51 @@ if os.path.exists(_LOGO_PATH):
 # Data loading
 # ---------------------------------------------------------------------------
 
+def filename_group(path):
+    """Return the group label from everything before the first hyphen."""
+    stem = os.path.splitext(os.path.basename(path))[0]
+    return stem.split("-", 1)[0].strip()
+
+
+def group_number(group):
+    """Return a leading group number from labels such as '3' or '3 Infectious Diseases'."""
+    match = re.match(r"^\s*(\d+)\b", str(group))
+    return match.group(1) if match else None
+
+
+def group_colour(group):
+    number = group_number(group)
+    key = f"Group {number}" if number else str(group)
+    return GROUP_COLOURS.get(key, "#CCCCCC")
+
+
+def sort_key(value):
+    text = str(value)
+    number = group_number(text)
+    return (0, int(number), text.casefold()) if number else (1, text.casefold())
+
+
 def load_data():
-    files = sorted(glob.glob(os.path.join(DATA_DIR, "[0-9]*.xlsx")))
+    files = sorted(
+        path for path in glob.glob(os.path.join(DATA_DIR, "*.xlsx"))
+        if "-" in os.path.basename(path) and not os.path.basename(path).startswith("~$")
+    )
     if not files:
         raise FileNotFoundError(
-            f"No input Excel files matching '[0-9]*.xlsx' were found in {DATA_DIR!r}. "
+            f"No input Excel files matching '*-*.xlsx' were found in {DATA_DIR!r}. "
             "For Render, include the workbook files in the repo or set DATA_DIR to the mounted data directory."
         )
     frames = []
     for path in files:
-        group_num = re.match(r"(\d+)", os.path.basename(path)).group(1)
+        group = filename_group(path)
         df = pd.read_excel(path, engine="openpyxl", usecols=range(len(INPUT_COLS)))
         df.columns = INPUT_COLS
         df = df[df["Use Case"].notna() & (df["Use Case"] != "Use case")].copy()
         for col in SCORE_COLS:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         df["Total"] = df[SCORE_COLS].sum(axis=1)
-        df["Workshop Group"] = int(group_num)
-        df["Group"] = f"Group {group_num}"
+        df["Workshop Group"] = int(group) if group.isdigit() else group
+        df["Group"] = group
         df["Use Case Short"] = df["Use Case"].str.replace(r"^\d+\s*-\s*", "", regex=True).str.strip()
         frames.append(df)
     return pd.concat(frames, ignore_index=True)
@@ -172,11 +200,11 @@ def load_data():
 
 df_all = load_data()
 use_cases   = sorted(df_all["Use Case Short"].unique())
-groups      = sorted(df_all["Group"].unique())
+groups      = sorted(df_all["Group"].unique(), key=sort_key)
 partners    = sorted(df_all["Partner/Office"].dropna().unique())
-wk_groups   = sorted(df_all["Workshop Group"].dropna().unique())
+wk_groups   = sorted(df_all["Workshop Group"].dropna().unique(), key=sort_key)
 
-GROUP_COLOUR_MAP = {g: GROUP_COLOURS.get(g, "#CCCCCC") for g in groups}
+GROUP_COLOUR_MAP = {g: group_colour(g) for g in groups}
 
 # ---------------------------------------------------------------------------
 # Filter helper
@@ -285,7 +313,7 @@ TOP_ROW_STYLE = {
     "alignItems": "stretch",
 }
 
-app = dash.Dash(__name__, title="FMoH Prioritization Dashboard")
+app = dash.Dash(__name__, title="FMoH prioritisation dashboard")
 server = app.server
 
 # ---------------------------------------------------------------------------
@@ -313,41 +341,25 @@ def _require_auth():
 
 _filter_label = {"fontWeight": "600", "fontSize": "12px", "color": "#6b7280",
                  "marginBottom": "4px"}
+_filter_control = {"fontSize": "12px"}
+_filter_input = {
+    **_filter_control,
+    "width": "80px",
+    "padding": "6px",
+    "borderRadius": "4px",
+    "border": "1px solid #d1d5db",
+}
 
 app.layout = html.Div(
     style={"fontFamily": "Inter, sans-serif", "backgroundColor": "#f3f4f6",
            "minHeight": "100vh", "padding": "24px"},
     children=[
-        html.H1("FMoH Use Case Prioritization - Group Comparison",
+        html.H1("FMoH use case prioritisation - group comparison",
                 style={"color": "#111827", "marginBottom": "4px"}),
         html.P(f"{len(use_cases)} use cases · {len(groups)} groups · scores 1–5 per criterion",
                style={"color": "#6b7280", "marginBottom": "16px"}),
 
-        # ── Group key / toggle filter ──────────────────────────────────────
         dcc.Store(id="active-groups", data=groups),
-        html.Div(
-            style={**CARD_STYLE, "display": "flex", "flexWrap": "wrap",
-                   "alignItems": "center", "gap": "8px"},
-            children=[
-                html.Span("Groups:", style={"fontWeight": "600", "color": "#374151",
-                                            "marginRight": "4px", "fontSize": "13px"}),
-                *[
-                    html.Button(
-                        group,
-                        id={"type": "group-btn", "index": group},
-                        n_clicks=0,
-                        style={
-                            "backgroundColor": GROUP_COLOUR_MAP.get(group, "#CCCCCC"),
-                            "color": "#000000" if group in LIGHT_BG_GROUPS else "#FFFFFF",
-                            "padding": "4px 14px", "borderRadius": "4px",
-                            "border": "none", "cursor": "pointer",
-                            "fontSize": "13px", "fontWeight": "500",
-                        },
-                    )
-                    for group in groups
-                ],
-            ],
-        ),
 
         # ── Global filters ─────────────────────────────────────────────────
         html.Div(
@@ -357,28 +369,29 @@ app.layout = html.Div(
                 html.Div(style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "12px"},
                          children=[
                     html.Div([
-                        html.P("Partner / Office", style=_filter_label),
+                        html.P("Partner / office", style=_filter_label),
                         dcc.Dropdown(id="partner-filter",
                                      options=[{"label": p, "value": p} for p in partners],
                                      multi=True, placeholder="All…",
-                                     style={"fontSize": "12px"}),
+                                     style=_filter_control),
                     ]),
                     html.Div([
-                        html.P("Workshop Group", style=_filter_label),
+                        html.P("Workshop group", style=_filter_label),
                         dcc.Dropdown(id="group-filter",
                                      options=[{"label": g, "value": g} for g in wk_groups],
                                      multi=True, placeholder="All…",
-                                     style={"fontSize": "12px"}),
+                                     style=_filter_control),
                     ]),
                 ]),
                 # Full-width row: Use Case + Top N
                 html.Div(style={"display": "grid", "gridTemplateColumns": "1fr auto", "gap": "12px",
                                 "alignItems": "flex-end"}, children=[
                     html.Div([
-                        html.P("Use Case", style=_filter_label),
+                        html.P("Use case", style=_filter_label),
                         dcc.Dropdown(id="usecase-filter",
                                      options=[{"label": u, "value": u} for u in use_cases],
-                                     multi=True, placeholder="All use cases…"),
+                                     multi=True, placeholder="All use cases…",
+                                     style=_filter_control),
                     ]),
                     html.Div([
                         html.P("Show top N", style=_filter_label),
@@ -386,9 +399,7 @@ app.layout = html.Div(
                             id="leaderboard-top-n",
                             type="number", value=None, placeholder="All",
                             min=1, step=1,
-                            style={"width": "80px", "fontSize": "12px",
-                                   "padding": "6px", "borderRadius": "4px",
-                                   "border": "1px solid #d1d5db"},
+                            style=_filter_input,
                         ),
                     ]),
                 ]),
@@ -410,7 +421,7 @@ app.layout = html.Div(
                         "flexDirection": "column",
                     },
                     children=[
-                    html.P("Average Total Score - Ranked (mean with min/max range)",
+                    html.P("Average total score - ranked (mean with min/max range)",
                            style=SECTION_LABEL),
                     html.Div(
                         style={"display": "flex", "gap": "12px", "marginBottom": "10px",
@@ -473,7 +484,7 @@ app.layout = html.Div(
                                 "flexDirection": "column",
                             },
                             children=[
-                            html.P("Average Score per Criterion (mean with min/max range)", style=SECTION_LABEL),
+                            html.P("Average score per criterion (mean with min/max range)", style=SECTION_LABEL),
                             dcc.RadioItems(
                                 id="criteria-split-mode",
                                 options=[
@@ -503,7 +514,7 @@ app.layout = html.Div(
                                 "flexDirection": "column",
                             },
                             children=[
-                            html.P("Average Score (mean with min/max range)", style=SECTION_LABEL),
+                            html.P("Average score (mean with min/max range)", style=SECTION_LABEL),
                             dcc.Graph(
                                 id="all-scores-radar-chart",
                                 responsive=True,
@@ -519,7 +530,7 @@ app.layout = html.Div(
         # ── Agreement heatmap ──────────────────────────────────────────────
         html.Div(style=CARD_STYLE, children=[
             html.P(
-                "Mean Score Heatmap - Average Score per Use Case by Criterion Across Groups.",
+                "Mean score heatmap - average score per use case by criterion across groups.",
                 style=SECTION_LABEL,
             ),
             html.Div(
@@ -531,7 +542,7 @@ app.layout = html.Div(
                         dcc.Dropdown(
                             id="heatmap-sort-by",
                             options=(
-                                [{"label": "Average Score", "value": "avg"}] +
+                                [{"label": "Average score", "value": "avg"}] +
                                 [{"label": c, "value": c} for c in SCORE_COLS] +
                                 [{"label": "Total", "value": "Total"}]
                             ),
@@ -558,7 +569,7 @@ app.layout = html.Div(
 
         # ── Stats table ────────────────────────────────────────────────────
         html.Div(style=CARD_STYLE, children=[
-            html.P("Summary Table - Scores per Use Case Across Groups", style=SECTION_LABEL),
+            html.P("Summary table - scores per use case across groups", style=SECTION_LABEL),
             html.Div(
                 style={"display": "flex", "gap": "12px", "marginBottom": "10px",
                        "alignItems": "flex-end"},
@@ -610,49 +621,6 @@ app.layout = html.Div(
 # ---------------------------------------------------------------------------
 
 @app.callback(
-    Output("active-groups", "data"),
-    Input({"type": "group-btn", "index": ALL}, "n_clicks"),
-    State("active-groups", "data"),
-)
-def toggle_group(n_clicks_list, active_groups):
-    triggered = dash.callback_context.triggered
-    if not triggered or triggered[0]["value"] == 0:
-        return active_groups
-    import json
-    group = json.loads(triggered[0]["prop_id"].split(".")[0])["index"]
-    if group in active_groups:
-        updated = [g for g in active_groups if g != group]
-        return updated if updated else active_groups  # keep at least one active
-    return active_groups + [group]
-
-
-@app.callback(
-    Output({"type": "group-btn", "index": ALL}, "style"),
-    Input("active-groups", "data"),
-)
-def update_btn_styles(active_groups):
-    _active = set(active_groups or [])
-    styles = []
-    for group in groups:
-        if group in _active:
-            styles.append({
-                "backgroundColor": GROUP_COLOUR_MAP.get(group, "#CCCCCC"),
-                "color": "#000000" if group in LIGHT_BG_GROUPS else "#FFFFFF",
-                "padding": "4px 14px", "borderRadius": "4px",
-                "border": "none", "cursor": "pointer",
-                "fontSize": "13px", "fontWeight": "500",
-            })
-        else:
-            styles.append({
-                "backgroundColor": "#e5e7eb", "color": "#9ca3af",
-                "padding": "4px 14px", "borderRadius": "4px",
-                "border": "1px solid #d1d5db", "cursor": "pointer",
-                "fontSize": "13px", "fontWeight": "500",
-            })
-    return styles
-
-
-@app.callback(
     Output("partner-filter", "options"),
     Output("group-filter", "options"),
     Output("usecase-filter", "options"),
@@ -684,7 +652,7 @@ def update_filter_options(partners_sel, groups_sel, use_cases_sel):
 
     return (
         [{"label": p, "value": p} for p in sorted(df_p["Partner/Office"].dropna().unique())],
-        [{"label": g, "value": g} for g in sorted(df_g["Workshop Group"].dropna().unique())],
+        [{"label": g, "value": g} for g in sorted(df_g["Workshop Group"].dropna().unique(), key=sort_key)],
         [{"label": u, "value": u} for u in sorted(df_u["Use Case Short"].unique())],
     )
 
@@ -738,7 +706,7 @@ def leaderboard(partners_sel, groups_sel, use_cases_sel, active_groups,
         )),
     ))
     fig.update_layout(
-        xaxis_title="Total Score (max 25)",
+        xaxis_title="Total score (max 25)",
         yaxis_title=None,
         margin=dict(l=0, r=20, t=20, b=40),
         plot_bgcolor="#ffffff",
@@ -772,7 +740,7 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
             .agg(mean="mean", min="min", max="max")
             .reset_index()
         )
-        for group in sorted(stats["Group"].unique()):
+        for group in sorted(stats["Group"].unique(), key=sort_key):
             group_stats = (
                 stats[stats["Group"] == group]
                 .set_index("Criterion")
@@ -838,7 +806,7 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
     fig.update_layout(
         autosize=True,
         barmode=barmode,
-        yaxis=dict(range=[0, 5], title="Mean Score (1–5)"),
+        yaxis=dict(range=[0, 5], title="Mean score (1–5)"),
         showlegend=showlegend,
         legend_title="Group",
         margin=dict(l=0, r=0, t=20, b=40),
@@ -862,7 +830,7 @@ def all_scores_deep_dive(partners_sel, groups_sel, use_cases_sel, active_groups,
     if df.empty:
         return go.Figure()
 
-    active_groups = sorted(df["Group"].unique())
+    active_groups = sorted(df["Group"].unique(), key=sort_key)
 
     radar_fig = go.Figure()
     for group in active_groups:
@@ -870,7 +838,7 @@ def all_scores_deep_dive(partners_sel, groups_sel, use_cases_sel, active_groups,
         values = g[SCORE_COLS].mean().tolist()
         values += [values[0]]
         radar_fig.add_trace(go.Scatterpolar(
-            r=values, theta=RADAR_CRITERION_LABELS + [RADAR_CRITERION_LABELS[0]],
+            r=values, theta=SCORE_COLS + [SCORE_COLS[0]],
             name=group, fill="toself", opacity=0.5,
             line_color=GROUP_COLOUR_MAP.get(group, "#CCCCCC"),
         ))
@@ -880,8 +848,9 @@ def all_scores_deep_dive(partners_sel, groups_sel, use_cases_sel, active_groups,
             bgcolor="#ffffff",
             angularaxis=dict(
                 categoryorder="array",
-                categoryarray=RADAR_CRITERION_LABELS,
+                categoryarray=SCORE_COLS,
                 direction="clockwise",
+                rotation=RADAR_ROTATION_DEGREES,
                 gridcolor="#000000",
                 linecolor="#000000",
                 tickfont=dict(color="#000000"),
@@ -963,7 +932,7 @@ def agreement_heatmap(partners_sel, groups_sel, use_cases_sel, active_groups,
         textfont=dict(color="black"),
         colorscale=colorscale, zmin=0, zmax=5,
         colorbar=dict(title="Score", tickvals=[1,2,3,4,5]),
-        hovertemplate="Use Case: %{y}<br>%{x}<br>%{text}<extra></extra>",
+        hovertemplate="Use case: %{y}<br>%{x}<br>%{text}<extra></extra>",
     ))
     fig.update_xaxes(
         tickvals=[x_total] + x_crit,
@@ -999,11 +968,10 @@ def stats_table(partners_sel, groups_sel, use_cases_sel, active_groups,
         .mean()
     )
     tbl = group_scores.groupby("Use Case Short")["Total"].agg(
-        Groups="count",
         Mean="mean", Median="median", Min="min", Max="max",
         SD="std", Range=lambda x: x.max() - x.min()
     ).round(2).reset_index().sort_values(sort_by, ascending=(order == "asc"))
-    tbl.columns = ["Use Case", "Groups", "Mean", "Median", "Min", "Max", "SD", "Range"]
+    tbl.columns = ["Use case", "Mean", "Median", "Min", "Max", "SD", "Range"]
     fig = go.Figure(go.Table(
         header=dict(values=list(tbl.columns), fill_color="#3b82f6",
                     font=dict(color="white", size=12), align="left"),
@@ -1037,31 +1005,24 @@ if __name__ == "__main__":
 
     _local_url = f"http://127.0.0.1:{_port}"
     _lan_urls = get_lan_urls(_port)
-    _lan_url = _lan_urls[0]
-    _debug = bool(_args.debug or _args.plotly_cloud)
+    _debug = bool(_args.debug)
 
     if _args.tunnel:
         _public_url = start_public_tunnel(_port)
         print(f"Public URL  : {_public_url}")
         print(f"Local URL   : {_local_url}")
-        print(f"LAN URL     : {_lan_url}")
+        for i, _lan_url in enumerate(_lan_urls):
+            print(f"{'LAN URL' if i == 0 else 'LAN URL alt'}  : {_lan_url}")
         print(f"Username    : {_args.username}")
-        print("Share the Public URL and credentials with your participants.")
-        print("Keep this terminal open while participants are using the dashboard.")
+        print("Share the public URL and credentials with your participants.")
         _host = "0.0.0.0"
     elif _args.lan:
-        print("LAN URLs    :")
-        for _url in _lan_urls:
-            print(f"  {_url}")
+        for i, _lan_url in enumerate(_lan_urls):
+            print(f"{'LAN URL' if i == 0 else 'LAN URL alt'}  : {_lan_url}")
         print(f"Local URL   : {_local_url}")
-        print("Open a LAN URL from the other device while both devices are on the same Wi-Fi/network.")
-        print("If it does not load, check that the OS firewall allows incoming TCP connections on this port.")
         _host = "0.0.0.0"
     else:
         print(f"Local URL   : {_local_url}")
-        if _args.plotly_cloud:
-            print("Plotly Cloud mode enabled.")
-            print("Open the local URL in your browser and use the Dash Dev Tools Publish flow.")
         _host = "127.0.0.1"
 
     app.run(
