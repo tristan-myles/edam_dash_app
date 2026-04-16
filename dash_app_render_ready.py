@@ -564,7 +564,7 @@ app.layout = html.Div(
                     ]),
                 ],
             ),
-            dcc.Graph(id="agreement-heatmap", style={"height": "700px"}),
+            dcc.Graph(id="agreement-heatmap", style={"height": "820px"}),
         ]),
 
         # ── Stats table ────────────────────────────────────────────────────
@@ -897,9 +897,9 @@ def agreement_heatmap(partners_sel, groups_sel, use_cases_sel, active_groups,
     uc_list = means.index.tolist()
     n_rows = len(uc_list)
 
-    # Numeric x-axis: Total first at -0.35 (~35% width), criteria at 0..4
+    # Numeric x-axis: Total first, with Policy Relevance nudged right for label spacing.
     x_total = -0.35
-    x_crit = list(range(len(SCORE_COLS)))
+    x_crit = [0.25] + list(range(1, len(SCORE_COLS)))
 
     # Custom colorscale: z=0 → white (Total sentinel), z=1-5 → RdYlGn
     # With zmin=0, zmax=5: position = z/5
@@ -938,11 +938,12 @@ def agreement_heatmap(partners_sel, groups_sel, use_cases_sel, active_groups,
         tickvals=[x_total] + x_crit,
         ticktext=["Total"] + SCORE_COLS,
         tickangle=0,
+        tickfont=dict(size=12),
     )
     fig.update_layout(
         margin=dict(l=0, r=0, t=20, b=40),
         paper_bgcolor="#ffffff",
-        yaxis=dict(tickfont=dict(size=10)),
+        yaxis=dict(tickfont=dict(size=12)),
     )
     return fig
 
