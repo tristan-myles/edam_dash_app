@@ -473,7 +473,7 @@ app.layout = html.Div(
                                 "flexDirection": "column",
                             },
                             children=[
-                            html.P("Average Score per Criterion", style=SECTION_LABEL),
+                            html.P("Average Score per Criterion (mean with min/max range)", style=SECTION_LABEL),
                             dcc.RadioItems(
                                 id="criteria-split-mode",
                                 options=[
@@ -503,9 +503,7 @@ app.layout = html.Div(
                                 "flexDirection": "column",
                             },
                             children=[
-                            html.P("All Scores Deep Dive", style=SECTION_LABEL),
-                            html.P("Criteria profile and group comparison across all filtered scores.",
-                                   style={"fontSize": "12px", "color": "#9ca3af", "marginBottom": "8px"}),
+                            html.P("Average Score (mean with min/max range)", style=SECTION_LABEL),
                             dcc.Graph(
                                 id="all-scores-radar-chart",
                                 responsive=True,
@@ -521,7 +519,7 @@ app.layout = html.Div(
         # ── Agreement heatmap ──────────────────────────────────────────────
         html.Div(style=CARD_STYLE, children=[
             html.P(
-                "Mean Score Heatmap - Average score per Use Case x Criterion across all active groups.",
+                "Mean Score Heatmap - Average Score per Use Case by Criterion Across Groups.",
                 style=SECTION_LABEL,
             ),
             html.Div(
@@ -560,7 +558,7 @@ app.layout = html.Div(
 
         # ── Stats table ────────────────────────────────────────────────────
         html.Div(style=CARD_STYLE, children=[
-            html.P("Summary Statistics Table - Total Score per Use Case", style=SECTION_LABEL),
+            html.P("Summary Table - Scores per Use Case Across Groups", style=SECTION_LABEL),
             html.Div(
                 style={"display": "flex", "gap": "12px", "marginBottom": "10px",
                        "alignItems": "flex-end"},
@@ -872,17 +870,30 @@ def all_scores_deep_dive(partners_sel, groups_sel, use_cases_sel, active_groups,
         values = g[SCORE_COLS].mean().tolist()
         values += [values[0]]
         radar_fig.add_trace(go.Scatterpolar(
-            r=values, theta=SCORE_COLS + [SCORE_COLS[0]],
+            r=values, theta=RADAR_CRITERION_LABELS + [RADAR_CRITERION_LABELS[0]],
             name=group, fill="toself", opacity=0.5,
             line_color=GROUP_COLOUR_MAP.get(group, "#CCCCCC"),
         ))
     radar_fig.update_layout(
         autosize=True,
         polar=dict(
-            angularaxis=dict(categoryorder="array", categoryarray=SCORE_COLS),
-            radialaxis=dict(visible=True, range=[0, 5]),
+            bgcolor="#ffffff",
+            angularaxis=dict(
+                categoryorder="array",
+                categoryarray=RADAR_CRITERION_LABELS,
+                direction="clockwise",
+                gridcolor="#000000",
+                linecolor="#000000",
+                tickfont=dict(color="#000000"),
+            ),
+            radialaxis=dict(
+                visible=True,
+                range=[0, 5],
+                gridcolor="#000000",
+                linecolor="#000000",
+                tickfont=dict(color="#000000"),
+            ),
         ),
-        title=dict(text="Criteria Profile - All Filtered Scores", font=dict(size=13)),
         margin=dict(l=20, r=20, t=45, b=10),
         paper_bgcolor="#ffffff", legend_title="Group",
     )
@@ -980,11 +991,19 @@ def agreement_heatmap(partners_sel, groups_sel, use_cases_sel, active_groups,
 def stats_table(partners_sel, groups_sel, use_cases_sel, active_groups,
                 sort_by, order, top_n):
     df = apply_filters(partners_sel, groups_sel, use_cases_sel, active_groups, top_n)
-    tbl = df.groupby(["Partner/Office", "Workshop Group", "Use Case Short"])["Total"].agg(
+    if df.empty:
+        return go.Figure()
+
+    group_scores = (
+        df.groupby(["Use Case Short", "Group"], as_index=False)["Total"]
+        .mean()
+    )
+    tbl = group_scores.groupby("Use Case Short")["Total"].agg(
+        Groups="count",
         Mean="mean", Median="median", Min="min", Max="max",
         SD="std", Range=lambda x: x.max() - x.min()
     ).round(2).reset_index().sort_values(sort_by, ascending=(order == "asc"))
-    tbl.columns = ["Partner/Office", "Workshop Group", "Use Case", "Mean", "Median", "Min", "Max", "SD", "Range"]
+    tbl.columns = ["Use Case", "Groups", "Mean", "Median", "Min", "Max", "SD", "Range"]
     fig = go.Figure(go.Table(
         header=dict(values=list(tbl.columns), fill_color="#3b82f6",
                     font=dict(color="white", size=12), align="left"),
