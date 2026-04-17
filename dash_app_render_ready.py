@@ -514,6 +514,7 @@ app.layout = html.Div(
                                 options=[
                                     {"label": "Overall", "value": "overall"},
                                     {"label": "Split by group", "value": "group"},
+                                    {"label": "Split by use case", "value": "use_case"},
                                 ],
                                 value="overall",
                                 inline=True,
@@ -538,7 +539,19 @@ app.layout = html.Div(
                                 "flexDirection": "column",
                             },
                             children=[
-                            html.P("Score per criterion", style=SECTION_LABEL),
+                            html.P("Average score per criterion", style=SECTION_LABEL),
+                            dcc.RadioItems(
+                                id="radar-split-mode",
+                                options=[
+                                    {"label": "Overall", "value": "overall"},
+                                    {"label": "Split by group", "value": "group"},
+                                    {"label": "Split by use case", "value": "use_case"},
+                                ],
+                                value="group",
+                                inline=True,
+                                style={"fontSize": "12px", "color": "#374151", "marginBottom": "8px"},
+                                labelStyle={"marginRight": "14px"},
+                            ),
                             dcc.Graph(
                                 id="all-scores-radar-chart",
                                 responsive=True,
@@ -734,7 +747,7 @@ def leaderboard(partners_sel, groups_sel, use_cases_sel, active_groups,
             )),
         ))
     fig.update_layout(
-        xaxis_title="Total score (max 25)",
+        xaxis_title="Total score",
         yaxis_title=None,
         showlegend=True,
         legend_title="Group",
@@ -776,24 +789,32 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
                      var_name="Criterion", value_name="Score")
 
     fig = go.Figure()
-    if split_mode == "group":
+    if split_mode in {"group", "use_case"}:
+        series_col = "Group" if split_mode == "group" else "Use Case Short"
+        legend_title = "Group" if split_mode == "group" else "Use case"
         stats = (
-            melted.groupby(["Group", "Criterion"])["Score"]
+            melted.groupby([series_col, "Criterion"])["Score"]
             .agg(mean="mean", min="min", max="max")
             .reset_index()
         )
-        for group in sorted(stats["Group"].unique(), key=sort_key):
+        series_values = sorted(
+            stats[series_col].unique(),
+            key=sort_key if split_mode == "group" else lambda value: str(value).casefold(),
+        )
+        for series_value in series_values:
             group_stats = (
-                stats[stats["Group"] == group]
+                stats[stats[series_col] == series_value]
                 .set_index("Criterion")
                 .reindex(SCORE_COLS)
                 .reset_index()
             )
+            bar_kwargs = {}
+            if split_mode == "group":
+                bar_kwargs["marker_color"] = GROUP_COLOUR_MAP.get(series_value, "#CCCCCC")
             fig.add_trace(go.Bar(
                 x=group_stats["Criterion"],
                 y=group_stats["mean"],
-                name=group,
-                marker_color=GROUP_COLOUR_MAP.get(group, "#CCCCCC"),
+                name=series_value,
                 error_y=dict(
                     type="data",
                     symmetric=False,
@@ -811,10 +832,12 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
                     "Max: %{customdata[1]:.2f}<extra></extra>"
                 ),
                 customdata=np.column_stack([group_stats["min"], group_stats["max"]]),
+                **bar_kwargs,
             ))
         showlegend = True
         barmode = "group"
     else:
+        legend_title = "Group"
         stats = (
             melted.groupby("Criterion")["Score"]
             .agg(mean="mean", min="min", max="max")
@@ -850,7 +873,7 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
         barmode=barmode,
         yaxis=dict(range=[0, 5], title="Mean score (1–5)"),
         showlegend=showlegend,
-        legend_title="Group",
+        legend_title=legend_title,
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -868,6 +891,7 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
 
 @app.callback(
     Output("all-scores-radar-chart", "figure"),
+    Input("radar-split-mode", "value"),
     Input("partner-filter", "value"),
     Input("group-filter", "value"),
     Input("usecase-filter", "value"),
@@ -875,7 +899,7 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
     Input("leaderboard-top-n-mode", "value"),
     Input("leaderboard-top-n", "value"),
 )
-def all_scores_deep_dive(partners_sel, groups_sel, use_cases_sel, active_groups,
+def all_scores_deep_dive(split_mode, partners_sel, groups_sel, use_cases_sel, active_groups,
                          top_n_mode, top_n):
     df = apply_filters(
         partners_sel, groups_sel, use_cases_sel, active_groups, top_n, top_n_mode
@@ -883,18 +907,41 @@ def all_scores_deep_dive(partners_sel, groups_sel, use_cases_sel, active_groups,
     if df.empty:
         return go.Figure()
 
-    active_groups = sorted(df["Group"].unique(), key=sort_key)
-
     radar_fig = go.Figure()
-    for group in active_groups:
-        g = df[df["Group"] == group]
-        values = g[SCORE_COLS].mean().tolist()
+
+    if split_mode == "overall":
+        values = df[SCORE_COLS].mean().tolist()
         values += [values[0]]
         radar_fig.add_trace(go.Scatterpolar(
             r=values, theta=SCORE_COLS + [SCORE_COLS[0]],
-            name=group, fill="toself", opacity=0.5,
-            line_color=GROUP_COLOUR_MAP.get(group, "#CCCCCC"),
+            name="Overall", fill="toself", opacity=0.5,
+            line_color="#3b82f6",
         ))
+        legend_title = None
+    elif split_mode == "use_case":
+        use_case_values = sorted(df["Use Case Short"].unique(), key=lambda value: str(value).casefold())
+        for use_case in use_case_values:
+            uc = df[df["Use Case Short"] == use_case]
+            values = uc[SCORE_COLS].mean().tolist()
+            values += [values[0]]
+            radar_fig.add_trace(go.Scatterpolar(
+                r=values, theta=SCORE_COLS + [SCORE_COLS[0]],
+                name=use_case, fill="toself", opacity=0.35,
+            ))
+        legend_title = "Use case"
+    else:
+        active_groups = sorted(df["Group"].unique(), key=sort_key)
+        for group in active_groups:
+            g = df[df["Group"] == group]
+            values = g[SCORE_COLS].mean().tolist()
+            values += [values[0]]
+            radar_fig.add_trace(go.Scatterpolar(
+                r=values, theta=SCORE_COLS + [SCORE_COLS[0]],
+                name=group, fill="toself", opacity=0.5,
+                line_color=GROUP_COLOUR_MAP.get(group, "#CCCCCC"),
+            ))
+        legend_title = "Group"
+
     radar_fig.update_layout(
         autosize=True,
         polar=dict(
@@ -917,7 +964,8 @@ def all_scores_deep_dive(partners_sel, groups_sel, use_cases_sel, active_groups,
             ),
         ),
         margin=dict(l=20, r=20, t=45, b=10),
-        paper_bgcolor="#ffffff", legend_title="Group",
+        paper_bgcolor="#ffffff",
+        legend_title=legend_title,
     )
 
     return radar_fig
