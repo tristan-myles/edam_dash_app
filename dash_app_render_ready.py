@@ -421,7 +421,7 @@ app.layout = html.Div(
                         "flexDirection": "column",
                     },
                     children=[
-                    html.P("Average total score - ranked (mean with min/max range)",
+                    html.P("Total score - ranked",
                            style=SECTION_LABEL),
                     html.Div(
                         style={"display": "flex", "gap": "12px", "marginBottom": "10px",
@@ -432,13 +432,11 @@ app.layout = html.Div(
                                 dcc.Dropdown(
                                     id="leaderboard-sort-by",
                                     options=[
-                                        {"label": "Mean",  "value": "mean"},
-                                        {"label": "Min",   "value": "min"},
-                                        {"label": "Max",   "value": "max"},
-                                        {"label": "Range", "value": "range"},
-                                        {"label": "SD",    "value": "sd"},
+                                        {"label": "Total", "value": "Total"},
+                                        {"label": "SD",    "value": "SD"},
+                                        {"label": "Range", "value": "Range"},
                                     ],
-                                    value="mean", clearable=False,
+                                    value="Total", clearable=False,
                                     style={"width": "110px", "fontSize": "12px"},
                                 ),
                             ]),
@@ -514,7 +512,7 @@ app.layout = html.Div(
                                 "flexDirection": "column",
                             },
                             children=[
-                            html.P("Average score (mean with min/max range)", style=SECTION_LABEL),
+                            html.P("Score per criterion", style=SECTION_LABEL),
                             dcc.Graph(
                                 id="all-scores-radar-chart",
                                 responsive=True,
@@ -530,7 +528,7 @@ app.layout = html.Div(
         # ── Agreement heatmap ──────────────────────────────────────────────
         html.Div(style=CARD_STYLE, children=[
             html.P(
-                "Mean score heatmap - average score per use case by criterion across groups.",
+                "Score heatmap per use case by criterion",
                 style=SECTION_LABEL,
             ),
             html.Div(
@@ -578,15 +576,17 @@ app.layout = html.Div(
                         html.P("Sort by", style=_filter_label),
                         dcc.Dropdown(
                             id="table-sort-by",
-                            options=[
-                                {"label": "Mean",   "value": "Mean"},
-                                {"label": "Median", "value": "Median"},
-                                {"label": "Min",    "value": "Min"},
-                                {"label": "Max",    "value": "Max"},
-                                {"label": "SD",     "value": "SD"},
-                                {"label": "Range",  "value": "Range"},
-                            ],
-                            value="Mean", clearable=False,
+                            options=(
+                                [{"label": "Total", "value": "Total"}] +
+                                [{"label": c, "value": c} for c in SCORE_COLS] +
+                                [
+                                    {"label": "SD", "value": "SD"},
+                                    {"label": "Range", "value": "Range"},
+                                    {"label": "Use case", "value": "Use case"},
+                                    {"label": "Group", "value": "Group"},
+                                ]
+                            ),
+                            value="Total", clearable=False,
                             style={"width": "120px", "fontSize": "12px"},
                         ),
                     ]),
@@ -672,11 +672,11 @@ def leaderboard(partners_sel, groups_sel, use_cases_sel, active_groups,
     df = apply_filters(partners_sel, groups_sel, use_cases_sel, active_groups, top_n)
     grp = df.groupby("Use Case Short")["Total"]
     stats = pd.DataFrame({
-        "mean":  grp.mean(),
-        "min":   grp.min(),
-        "max":   grp.max(),
-        "sd":    grp.std(),
-        "range": grp.max() - grp.min(),
+        "Total": grp.mean(),
+        "Min":   grp.min(),
+        "Max":   grp.max(),
+        "SD":    grp.std(),
+        "Range": grp.max() - grp.min(),
     })
 
     # For horizontal bar charts, sort ascending so highest value appears at the top
@@ -685,24 +685,18 @@ def leaderboard(partners_sel, groups_sel, use_cases_sel, active_groups,
     fig = go.Figure()
     fig.add_trace(go.Bar(
         y=stats.index,
-        x=stats["mean"],
+        x=stats["Total"],
         orientation="h",
-        error_x=dict(
-            type="data", symmetric=False,
-            arrayminus=(stats["mean"] - stats["min"]).values,
-            array=(stats["max"] - stats["mean"]).values,
-            visible=True, color="#000000",
-        ),
         marker_color="#3b82f6",
         hovertemplate=(
-            "%{y}<br>Mean: %{x:.2f}<br>"
+            "%{y}<br>Total: %{x:.2f}<br>"
             "Min: %{customdata[0]:.2f}  "
             "Max: %{customdata[1]:.2f}  "
             "Range: %{customdata[2]:.2f}  "
             "SD: %{customdata[3]:.2f}<extra></extra>"
         ),
         customdata=list(zip(
-            stats["min"], stats["max"], stats["range"], stats["sd"]
+            stats["Min"], stats["Max"], stats["Range"], stats["SD"]
         )),
     ))
     fig.update_layout(
@@ -964,15 +958,18 @@ def stats_table(partners_sel, groups_sel, use_cases_sel, active_groups,
     if df.empty:
         return go.Figure()
 
-    group_scores = (
-        df.groupby(["Use Case Short", "Group"], as_index=False)["Total"]
-        .mean()
+    tbl = df[["Group", "Use Case Short"] + SCORE_COLS + ["Total"]].copy()
+    tbl["SD"] = tbl[SCORE_COLS].std(axis=1).round(2)
+    tbl["Range"] = (tbl[SCORE_COLS].max(axis=1) - tbl[SCORE_COLS].min(axis=1)).round(2)
+    for col in SCORE_COLS + ["Total"]:
+        tbl[col] = tbl[col].round(2)
+    tbl = tbl.rename(columns={"Use Case Short": "Use case"})
+    tbl = tbl[["Group", "Use case"] + SCORE_COLS + ["Total", "SD", "Range"]]
+    tbl = tbl.sort_values(
+        sort_by,
+        ascending=(order == "asc"),
+        key=lambda s: s.map(sort_key) if s.name == "Group" else s,
     )
-    tbl = group_scores.groupby("Use Case Short")["Total"].agg(
-        Mean="mean", Median="median", Min="min", Max="max",
-        SD="std", Range=lambda x: x.max() - x.min()
-    ).round(2).reset_index().sort_values(sort_by, ascending=(order == "asc"))
-    tbl.columns = ["Use case", "Mean", "Median", "Min", "Max", "SD", "Range"]
     fig = go.Figure(go.Table(
         header=dict(values=list(tbl.columns), fill_color="#3b82f6",
                     font=dict(color="white", size=12), align="left"),
