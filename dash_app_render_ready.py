@@ -210,7 +210,8 @@ GROUP_COLOUR_MAP = {g: group_colour(g) for g in groups}
 # Filter helper
 # ---------------------------------------------------------------------------
 
-def apply_filters(partners_sel, groups_sel, use_cases_sel, scoring_groups_sel=None, top_n=None):
+def apply_filters(partners_sel, groups_sel, use_cases_sel, scoring_groups_sel=None,
+                  top_n=None, top_n_mode="group"):
     df = df_all
     if partners_sel:
         df = df[df["Partner/Office"].isin(partners_sel)]
@@ -220,10 +221,22 @@ def apply_filters(partners_sel, groups_sel, use_cases_sel, scoring_groups_sel=No
         df = df[df["Use Case Short"].isin(use_cases_sel)]
     if scoring_groups_sel is not None:
         df = df[df["Group"].isin(scoring_groups_sel)]
-    if top_n and top_n > 0:
+    if top_n and top_n > 0 and top_n_mode == "overall":
         top_ucs = (df.groupby("Use Case Short")["Total"].mean()
                    .nlargest(int(top_n)).index)
         df = df[df["Use Case Short"].isin(top_ucs)]
+    if top_n and top_n > 0 and top_n_mode == "group":
+        top_n = int(top_n)
+        top_by_group = (
+            df.groupby(["Group", "Use Case Short"], as_index=False)["Total"]
+            .mean()
+            .sort_values(["Group", "Total"], ascending=[True, False])
+            .groupby("Group", group_keys=False)
+            .head(top_n)
+        )
+        keep = set(zip(top_by_group["Group"], top_by_group["Use Case Short"]))
+        row_keys = list(zip(df["Group"], df["Use Case Short"]))
+        df = df[[key in keep for key in row_keys]]
     return df
 
 
@@ -383,8 +396,8 @@ app.layout = html.Div(
                                      style=_filter_control),
                     ]),
                 ]),
-                # Full-width row: Use Case + Top N
-                html.Div(style={"display": "grid", "gridTemplateColumns": "1fr auto", "gap": "12px",
+                # Full-width row: Use Case + Top N filters
+                html.Div(style={"display": "grid", "gridTemplateColumns": "1fr auto auto", "gap": "12px",
                                 "alignItems": "flex-end"}, children=[
                     html.Div([
                         html.P("Use case", style=_filter_label),
@@ -394,7 +407,20 @@ app.layout = html.Div(
                                      style=_filter_control),
                     ]),
                     html.Div([
-                        html.P("Show top N", style=_filter_label),
+                        html.P("Show top", style=_filter_label),
+                        dcc.Dropdown(
+                            id="leaderboard-top-n-mode",
+                            options=[
+                                {"label": "Per group", "value": "group"},
+                                {"label": "Overall", "value": "overall"},
+                            ],
+                            value="group",
+                            clearable=False,
+                            style={"width": "120px", "fontSize": "12px"},
+                        ),
+                    ]),
+                    html.Div([
+                        html.P("Top N", style=_filter_label),
                         dcc.Input(
                             id="leaderboard-top-n",
                             type="number", value=None, placeholder="All",
@@ -665,48 +691,59 @@ def update_filter_options(partners_sel, groups_sel, use_cases_sel):
     Input("active-groups", "data"),
     Input("leaderboard-sort-by", "value"),
     Input("leaderboard-order", "value"),
+    Input("leaderboard-top-n-mode", "value"),
     Input("leaderboard-top-n", "value"),
 )
 def leaderboard(partners_sel, groups_sel, use_cases_sel, active_groups,
-                sort_by, order, top_n):
-    df = apply_filters(partners_sel, groups_sel, use_cases_sel, active_groups, top_n)
-    grp = df.groupby("Use Case Short")["Total"]
+                sort_by, order, top_n_mode, top_n):
+    df = apply_filters(
+        partners_sel, groups_sel, use_cases_sel, active_groups, top_n, top_n_mode
+    )
+    grp = df.groupby(["Use Case Short", "Group"])["Total"]
     stats = pd.DataFrame({
         "Total": grp.mean(),
         "Min":   grp.min(),
         "Max":   grp.max(),
         "SD":    grp.std(),
         "Range": grp.max() - grp.min(),
-    })
+    }).reset_index()
+    stats["SD"] = stats["SD"].fillna(0)
 
     # For horizontal bar charts, sort ascending so highest value appears at the top
     stats = stats.sort_values(sort_by, ascending=(order == "desc"))
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(
-        y=stats.index,
-        x=stats["Total"],
-        orientation="h",
-        marker_color="#3b82f6",
-        hovertemplate=(
-            "%{y}<br>Total: %{x:.2f}<br>"
-            "Min: %{customdata[0]:.2f}  "
-            "Max: %{customdata[1]:.2f}  "
-            "Range: %{customdata[2]:.2f}  "
-            "SD: %{customdata[3]:.2f}<extra></extra>"
-        ),
-        customdata=list(zip(
-            stats["Min"], stats["Max"], stats["Range"], stats["SD"]
-        )),
-    ))
+    for group in sorted(stats["Group"].unique(), key=sort_key):
+        group_stats = stats[stats["Group"] == group]
+        fig.add_trace(go.Bar(
+            y=group_stats["Use Case Short"],
+            x=group_stats["Total"],
+            name=group,
+            orientation="h",
+            marker_color=GROUP_COLOUR_MAP.get(group, "#CCCCCC"),
+            hovertemplate=(
+                "%{y}<br>Group: %{fullData.name}<br>"
+                "Total: %{x:.2f}<br>"
+                "Min: %{customdata[0]:.2f}  "
+                "Max: %{customdata[1]:.2f}  "
+                "Range: %{customdata[2]:.2f}  "
+                "SD: %{customdata[3]:.2f}<extra></extra>"
+            ),
+            customdata=list(zip(
+                group_stats["Min"], group_stats["Max"], group_stats["Range"], group_stats["SD"]
+            )),
+        ))
     fig.update_layout(
         xaxis_title="Total score (max 25)",
         yaxis_title=None,
+        showlegend=True,
+        legend_title="Group",
         margin=dict(l=0, r=20, t=20, b=40),
         plot_bgcolor="#ffffff",
         paper_bgcolor="#ffffff",
     )
     fig.update_xaxes(range=[0, 25], gridcolor="#f3f4f6")
+    fig.update_yaxes(categoryorder="array", categoryarray=stats["Use Case Short"].tolist())
     return fig
 
 
@@ -717,10 +754,14 @@ def leaderboard(partners_sel, groups_sel, use_cases_sel, active_groups,
     Input("group-filter", "value"),
     Input("usecase-filter", "value"),
     Input("active-groups", "data"),
+    Input("leaderboard-top-n-mode", "value"),
     Input("leaderboard-top-n", "value"),
 )
-def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_groups, top_n):
-    df = apply_filters(partners_sel, groups_sel, use_cases_sel, active_groups, top_n)
+def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_groups,
+                 top_n_mode, top_n):
+    df = apply_filters(
+        partners_sel, groups_sel, use_cases_sel, active_groups, top_n, top_n_mode
+    )
     if df.empty:
         return go.Figure()
 
@@ -817,10 +858,14 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
     Input("group-filter", "value"),
     Input("usecase-filter", "value"),
     Input("active-groups", "data"),
+    Input("leaderboard-top-n-mode", "value"),
     Input("leaderboard-top-n", "value"),
 )
-def all_scores_deep_dive(partners_sel, groups_sel, use_cases_sel, active_groups, top_n):
-    df = apply_filters(partners_sel, groups_sel, use_cases_sel, active_groups, top_n)
+def all_scores_deep_dive(partners_sel, groups_sel, use_cases_sel, active_groups,
+                         top_n_mode, top_n):
+    df = apply_filters(
+        partners_sel, groups_sel, use_cases_sel, active_groups, top_n, top_n_mode
+    )
     if df.empty:
         return go.Figure()
 
@@ -872,11 +917,14 @@ def all_scores_deep_dive(partners_sel, groups_sel, use_cases_sel, active_groups,
     Input("active-groups", "data"),
     Input("heatmap-sort-by", "value"),
     Input("heatmap-order", "value"),
+    Input("leaderboard-top-n-mode", "value"),
     Input("leaderboard-top-n", "value"),
 )
 def agreement_heatmap(partners_sel, groups_sel, use_cases_sel, active_groups,
-                      sort_by, order, top_n):
-    df = apply_filters(partners_sel, groups_sel, use_cases_sel, active_groups, top_n)
+                      sort_by, order, top_n_mode, top_n):
+    df = apply_filters(
+        partners_sel, groups_sel, use_cases_sel, active_groups, top_n, top_n_mode
+    )
     melted = pd.melt(df, id_vars=["Use Case Short"], value_vars=SCORE_COLS + ["Total"],
                      var_name="Criterion", value_name="Score")
     means = melted.groupby(["Use Case Short", "Criterion"])["Score"].mean().unstack("Criterion").round(2)
@@ -950,11 +998,14 @@ def agreement_heatmap(partners_sel, groups_sel, use_cases_sel, active_groups,
     Input("active-groups", "data"),
     Input("table-sort-by", "value"),
     Input("table-order", "value"),
+    Input("leaderboard-top-n-mode", "value"),
     Input("leaderboard-top-n", "value"),
 )
 def stats_table(partners_sel, groups_sel, use_cases_sel, active_groups,
-                sort_by, order, top_n):
-    df = apply_filters(partners_sel, groups_sel, use_cases_sel, active_groups, top_n)
+                sort_by, order, top_n_mode, top_n):
+    df = apply_filters(
+        partners_sel, groups_sel, use_cases_sel, active_groups, top_n, top_n_mode
+    )
     if df.empty:
         return go.Figure()
 
