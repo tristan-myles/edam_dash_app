@@ -738,11 +738,18 @@ def leaderboard(partners_sel, groups_sel, use_cases_sel, active_groups,
         yaxis_title=None,
         showlegend=True,
         legend_title="Group",
-        margin=dict(l=0, r=20, t=20, b=40),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0,
+        ),
+        margin=dict(l=0, r=20, t=50, b=40),
         plot_bgcolor="#ffffff",
         paper_bgcolor="#ffffff",
     )
-    fig.update_xaxes(range=[0, 25], gridcolor="#f3f4f6")
+    fig.update_xaxes(range=[0, 25], dtick=5, gridcolor="#f3f4f6")
     fig.update_yaxes(categoryorder="array", categoryarray=stats["Use Case Short"].tolist())
     return fig
 
@@ -844,7 +851,14 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
         yaxis=dict(range=[0, 5], title="Mean score (1–5)"),
         showlegend=showlegend,
         legend_title="Group",
-        margin=dict(l=0, r=0, t=20, b=40),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0,
+        ),
+        margin=dict(l=0, r=0, t=50, b=40),
         plot_bgcolor="#ffffff",
         paper_bgcolor="#ffffff",
     )
