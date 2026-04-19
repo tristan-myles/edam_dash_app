@@ -420,7 +420,7 @@ app.layout = html.Div(
     children=[
         html.H1("FMoH use case prioritisation",
                 style={"color": "#111827", "marginBottom": "4px", "textAlign": "center"}),
-        html.P(f"{len(use_cases)} Use Cases · {len(groups)} Themes · Scores 1–5 per Criterion",
+        html.P(f"{len(use_cases)} use cases · {len(groups)} themes · scores 1–5 per criterion",
                style={"color": "#6b7280", "fontSize": BODY_TEXT_SIZE, "marginBottom": "16px"}),
 
         dcc.Store(id="active-groups", data=groups),
@@ -493,7 +493,7 @@ app.layout = html.Div(
                 "flexDirection": "column",
             },
             children=[
-                html.P("Total Score Across All Criteria", style=SECTION_LABEL),
+                html.P("Total score across all criteria", style=SECTION_LABEL),
                 html.Div(
                     style={"display": "flex", "gap": "12px", "marginBottom": "10px",
                            "alignItems": "flex-end", "flexWrap": "wrap"},
@@ -503,8 +503,8 @@ app.layout = html.Div(
                             dcc.Dropdown(
                                 id="leaderboard-sort-by",
                                 options=[
-                                    {"label": "Total Score", "value": "Total"},
-                                    {"label": "Criterion Score Range", "value": "Range"},
+                                    {"label": "Total score", "value": "Total"},
+                                    {"label": "Criterion score range", "value": "Range"},
                                 ],
                                 value="Total", clearable=False,
                                 style={"width": "210px", "fontSize": BODY_TEXT_SIZE},
@@ -547,7 +547,7 @@ app.layout = html.Div(
                         "flexDirection": "column",
                     },
                     children=[
-                        html.P("Average Score per Criterion (Mean with Min/Max Range)", style=SECTION_LABEL),
+                        html.P("Average score per criterion with min/max use case range error bars", style=SECTION_LABEL),
                         dcc.RadioItems(
                             id="criteria-split-mode",
                             options=[
@@ -578,7 +578,7 @@ app.layout = html.Div(
                         "flexDirection": "column",
                     },
                     children=[
-                        html.P("Average Score per Criterion", style=SECTION_LABEL),
+                        html.P("Average score per criterion", style=SECTION_LABEL),
                         dcc.RadioItems(
                             id="radar-split-mode",
                             options=[
@@ -605,7 +605,7 @@ app.layout = html.Div(
         # ── Agreement heatmap ──────────────────────────────────────────────
         html.Div(style=CARD_STYLE, children=[
             html.P(
-                "Score Heatmap per Use Case by Criterion",
+                "Score heatmap per use case by criterion",
                 style=SECTION_LABEL,
             ),
             html.Div(
@@ -618,9 +618,9 @@ app.layout = html.Div(
                             id="heatmap-sort-by",
                             options=(
                                 [
-                                    {"label": "Total Score", "value": "Total"},
-                                    {"label": "Criterion Score SD", "value": "SD"},
-                                    {"label": "Criterion Score Range", "value": "Range"},
+                                    {"label": "Total score", "value": "Total"},
+                                    {"label": "Criterion score SD", "value": "SD"},
+                                    {"label": "Criterion score range", "value": "Range"},
                                 ] +
                                 [{"label": c, "value": c} for c in SCORE_COLS]
                             ),
@@ -647,7 +647,7 @@ app.layout = html.Div(
 
         # ── Stats table ────────────────────────────────────────────────────
         html.Div(style=CARD_STYLE, children=[
-            html.P("Summary Table - Scores per Use Case Across Themes", style=SECTION_LABEL),
+            html.P("Summary table - scores per use case across themes", style=SECTION_LABEL),
             html.Div(
                 style={"display": "flex", "gap": "12px", "marginBottom": "10px",
                        "alignItems": "flex-end"},
@@ -799,13 +799,13 @@ def leaderboard(partners_sel, groups_sel, use_cases_sel, active_groups,
             marker_color=GROUP_COLOUR_MAP.get(group, "#CCCCCC"),
             hovertemplate=(
                 "%{y}<br>Theme: %{fullData.name}<br>"
-                "Total Score: %{x:.2f}<br><br>"
-                "Policy Questions:<br>%{customdata}<extra></extra>"
+                "Total score: %{x:.2f}<br><br>"
+                "Policy questions:<br>%{customdata}<extra></extra>"
             ),
             customdata=group_stats["Policy questions"],
         ))
     fig.update_layout(
-        xaxis_title="Total Score",
+        xaxis_title="Total score",
         yaxis_title=None,
         showlegend=True,
         legend_title="Theme",
@@ -945,7 +945,7 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
         barmode=barmode,
         bargap=0.12,
         bargroupgap=0.04,
-        yaxis=dict(range=[0, 5], title="Mean Score (1–5)"),
+        yaxis=dict(range=[0, 5], title="Mean score (1–5)"),
         showlegend=showlegend,
         legend_title=legend_title,
         legend=dict(
