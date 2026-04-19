@@ -467,7 +467,7 @@ app.layout = html.Div(
                             ],
                             value="group",
                             clearable=False,
-                            style={"width": "120px", "fontSize": BODY_TEXT_SIZE},
+                            style={"width": "150px", "fontSize": BODY_TEXT_SIZE},
                         ),
                     ]),
                     html.Div([
