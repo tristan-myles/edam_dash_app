@@ -17,7 +17,7 @@ import dash
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Input, Output, dcc, html
+from dash import Input, Output, dash_table, dcc, html
 from flask import Response, request
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -166,6 +166,47 @@ def group_colour(group):
     return GROUP_COLOURS.get(key, "#CCCCCC")
 
 
+def text_colour_for_background(hex_colour):
+    hex_colour = hex_colour.lstrip("#")
+    if len(hex_colour) != 6:
+        return "#111827"
+    red, green, blue = (int(hex_colour[i:i + 2], 16) for i in (0, 2, 4))
+    luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255
+    return "#111827" if luminance > 0.62 else "#ffffff"
+
+
+def build_group_colour_map(group_values):
+    palette = list(GROUP_COLOURS.values())
+    colour_map = {}
+    for index, group in enumerate(group_values):
+        colour = group_colour(group)
+        if colour == "#CCCCCC" and group_number(group) is None:
+            colour = palette[index % len(palette)]
+        colour_map[group] = colour
+    return colour_map
+
+
+def datatable_filter_text(value):
+    return str(value).replace('"', '\\"')
+
+
+def separate_policy_questions(value):
+    text = str(value).replace("\\n", "\n").strip()
+    text = re.sub(r"\s+(?=\d+\.\s)", "\n\n", text)
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+
+def policy_questions_for_hover(values):
+    questions = []
+    seen = set()
+    for value in values.dropna():
+        text = separate_policy_questions(value)
+        if text and text not in seen:
+            seen.add(text)
+            questions.append(text)
+    return "<br><br>".join(questions).replace("\n", "<br>") if questions else "No policy question provided"
+
+
 def sort_key(value):
     text = str(value)
     number = group_number(text)
@@ -204,7 +245,7 @@ groups      = sorted(df_all["Group"].unique(), key=sort_key)
 partners    = sorted(df_all["Partner/Office"].dropna().unique())
 wk_groups   = sorted(df_all["Workshop Group"].dropna().unique(), key=sort_key)
 
-GROUP_COLOUR_MAP = {g: group_colour(g) for g in groups}
+GROUP_COLOUR_MAP = build_group_colour_map(groups)
 
 # ---------------------------------------------------------------------------
 # Filter helper
@@ -314,9 +355,16 @@ CARD_STYLE = {
     "marginBottom": "20px",
 }
 
-SECTION_LABEL = {"fontWeight": "600", "marginBottom": "8px", "color": "#374151"}
+SECTION_LABEL = {
+    "fontWeight": "600",
+    "fontSize": "22px",
+    "textAlign": "center",
+    "marginBottom": "12px",
+    "color": "#374151",
+}
 RESPONSIVE_GRAPH_CONFIG = {"responsive": True}
-TOP_ROW_HEIGHT = "clamp(940px, 95vh, 1080px)"
+TOTAL_SCORE_HEIGHT = "clamp(736px, 86vh, 943px)"
+AVERAGE_CHART_HEIGHT = "clamp(500px, 60vh, 700px)"
 FILL_GRAPH_STYLE = {"flex": "1 1 0", "height": "100%", "minHeight": "0", "width": "100%"}
 TOP_ROW_STYLE = {
     "display": "grid",
@@ -352,9 +400,12 @@ def _require_auth():
 # Layout
 # ---------------------------------------------------------------------------
 
-_filter_label = {"fontWeight": "600", "fontSize": "12px", "color": "#6b7280",
+BODY_TEXT_SIZE = "16px"
+TABLE_TEXT_SIZE = 16
+
+_filter_label = {"fontWeight": "600", "fontSize": BODY_TEXT_SIZE, "color": "#6b7280",
                  "marginBottom": "4px"}
-_filter_control = {"fontSize": "12px"}
+_filter_control = {"fontSize": BODY_TEXT_SIZE}
 _filter_input = {
     **_filter_control,
     "width": "80px",
@@ -367,10 +418,10 @@ app.layout = html.Div(
     style={"fontFamily": "Inter, sans-serif", "backgroundColor": "#f3f4f6",
            "minHeight": "100vh", "padding": "24px"},
     children=[
-        html.H1("FMoH use case prioritisation - group comparison",
-                style={"color": "#111827", "marginBottom": "4px"}),
-        html.P(f"{len(use_cases)} use cases · {len(groups)} groups · scores 1–5 per criterion",
-               style={"color": "#6b7280", "marginBottom": "16px"}),
+        html.H1("FMoH use case prioritisation",
+                style={"color": "#111827", "marginBottom": "4px", "textAlign": "center"}),
+        html.P(f"{len(use_cases)} Use Cases · {len(groups)} Themes · Scores 1–5 per Criterion",
+               style={"color": "#6b7280", "fontSize": BODY_TEXT_SIZE, "marginBottom": "16px"}),
 
         dcc.Store(id="active-groups", data=groups),
 
@@ -378,7 +429,7 @@ app.layout = html.Div(
         html.Div(
             style={**CARD_STYLE, "display": "flex", "flexDirection": "column", "gap": "10px"},
             children=[
-                # Compact row: Partner/Office + Workshop Group
+                # Compact row: Partner/Office + Theme
                 html.Div(style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "12px"},
                          children=[
                     html.Div([
@@ -389,7 +440,7 @@ app.layout = html.Div(
                                      style=_filter_control),
                     ]),
                     html.Div([
-                        html.P("Workshop group", style=_filter_label),
+                        html.P("Theme", style=_filter_label),
                         dcc.Dropdown(id="group-filter",
                                      options=[{"label": g, "value": g} for g in wk_groups],
                                      multi=True, placeholder="All…",
@@ -411,12 +462,12 @@ app.layout = html.Div(
                         dcc.Dropdown(
                             id="leaderboard-top-n-mode",
                             options=[
-                                {"label": "Per group", "value": "group"},
+                                {"label": "Per theme", "value": "group"},
                                 {"label": "Overall", "value": "overall"},
                             ],
                             value="group",
                             clearable=False,
-                            style={"width": "120px", "fontSize": "12px"},
+                            style={"width": "120px", "fontSize": BODY_TEXT_SIZE},
                         ),
                     ]),
                     html.Div([
@@ -432,133 +483,120 @@ app.layout = html.Div(
             ],
         ),
 
-        # ── Row 1: leaderboard (left) + criteria bar / histogram (right) ───
+        # ── Total score ─────────────────────────────────────────────────────
+        html.Div(
+            style={
+                **CARD_STYLE,
+                "minWidth": 0,
+                "minHeight": TOTAL_SCORE_HEIGHT,
+                "display": "flex",
+                "flexDirection": "column",
+            },
+            children=[
+                html.P("Total Score Across All Criteria", style=SECTION_LABEL),
+                html.Div(
+                    style={"display": "flex", "gap": "12px", "marginBottom": "10px",
+                           "alignItems": "flex-end", "flexWrap": "wrap"},
+                    children=[
+                        html.Div([
+                            html.P("Sort by", style=_filter_label),
+                            dcc.Dropdown(
+                                id="leaderboard-sort-by",
+                                options=[
+                                    {"label": "Total Score", "value": "Total"},
+                                    {"label": "Criterion Score Range", "value": "Range"},
+                                ],
+                                value="Total", clearable=False,
+                                style={"width": "210px", "fontSize": BODY_TEXT_SIZE},
+                            ),
+                        ]),
+                        html.Div([
+                            html.P("Order", style=_filter_label),
+                            dcc.Dropdown(
+                                id="leaderboard-order",
+                                options=[
+                                    {"label": "Descending", "value": "desc"},
+                                    {"label": "Ascending",  "value": "asc"},
+                                ],
+                                value="desc", clearable=False,
+                                style={"width": "130px", "fontSize": BODY_TEXT_SIZE},
+                            ),
+                        ]),
+                    ],
+                ),
+                dcc.Graph(
+                    id="leaderboard-chart",
+                    responsive=True,
+                    config=RESPONSIVE_GRAPH_CONFIG,
+                    style=FILL_GRAPH_STYLE,
+                ),
+            ],
+        ),
+
+        # ── Average score charts ────────────────────────────────────────────
         html.Div(
             style=TOP_ROW_STYLE,
             children=[
-                # Left - leaderboard
                 html.Div(
                     style={
                         **CARD_STYLE,
                         "marginBottom": 0,
                         "minWidth": 0,
-                        "minHeight": TOP_ROW_HEIGHT,
+                        "minHeight": AVERAGE_CHART_HEIGHT,
                         "display": "flex",
                         "flexDirection": "column",
                     },
                     children=[
-                    html.P("Total score - ranked",
-                           style=SECTION_LABEL),
-                    html.Div(
-                        style={"display": "flex", "gap": "12px", "marginBottom": "10px",
-                               "alignItems": "flex-end", "flexWrap": "wrap"},
-                        children=[
-                            html.Div([
-                                html.P("Sort by", style=_filter_label),
-                                dcc.Dropdown(
-                                    id="leaderboard-sort-by",
-                                    options=[
-                                        {"label": "Total", "value": "Total"},
-                                        {"label": "SD",    "value": "SD"},
-                                        {"label": "Range", "value": "Range"},
-                                    ],
-                                    value="Total", clearable=False,
-                                    style={"width": "110px", "fontSize": "12px"},
-                                ),
-                            ]),
-                            html.Div([
-                                html.P("Order", style=_filter_label),
-                                dcc.Dropdown(
-                                    id="leaderboard-order",
-                                    options=[
-                                        {"label": "Descending", "value": "desc"},
-                                        {"label": "Ascending",  "value": "asc"},
-                                    ],
-                                    value="desc", clearable=False,
-                                    style={"width": "130px", "fontSize": "12px"},
-                                ),
-                            ]),
-                        ],
-                    ),
-                    dcc.Graph(
-                        id="leaderboard-chart",
-                        responsive=True,
-                        config=RESPONSIVE_GRAPH_CONFIG,
-                        style=FILL_GRAPH_STYLE,
-                    ),
-                ]),
-                # Right - stacked
+                        html.P("Average Score per Criterion (Mean with Min/Max Range)", style=SECTION_LABEL),
+                        dcc.RadioItems(
+                            id="criteria-split-mode",
+                            options=[
+                                {"label": "Overall", "value": "overall"},
+                                {"label": "Split by theme", "value": "group"},
+                                {"label": "Split by use case", "value": "use_case"},
+                            ],
+                            value="overall",
+                            inline=True,
+                            style={"fontSize": BODY_TEXT_SIZE, "color": "#374151", "marginBottom": "8px"},
+                            labelStyle={"marginRight": "14px"},
+                        ),
+                        dcc.Graph(
+                            id="criteria-bar",
+                            responsive=True,
+                            config=RESPONSIVE_GRAPH_CONFIG,
+                            style=FILL_GRAPH_STYLE,
+                        ),
+                    ],
+                ),
                 html.Div(
                     style={
+                        **CARD_STYLE,
+                        "marginBottom": 0,
+                        "minWidth": 0,
+                        "minHeight": AVERAGE_CHART_HEIGHT,
                         "display": "flex",
                         "flexDirection": "column",
-                        "gap": "20px",
-                        "minWidth": 0,
-                        "minHeight": TOP_ROW_HEIGHT,
                     },
                     children=[
-                        html.Div(
-                            style={
-                                **CARD_STYLE,
-                                "marginBottom": 0,
-                                "minWidth": 0,
-                                "minHeight": 0,
-                                "flex": "1 1 0",
-                                "display": "flex",
-                                "flexDirection": "column",
-                            },
-                            children=[
-                            html.P("Average score per criterion (mean with min/max range)", style=SECTION_LABEL),
-                            dcc.RadioItems(
-                                id="criteria-split-mode",
-                                options=[
-                                    {"label": "Overall", "value": "overall"},
-                                    {"label": "Split by group", "value": "group"},
-                                    {"label": "Split by use case", "value": "use_case"},
-                                ],
-                                value="overall",
-                                inline=True,
-                                style={"fontSize": "12px", "color": "#374151", "marginBottom": "8px"},
-                                labelStyle={"marginRight": "14px"},
-                            ),
-                            dcc.Graph(
-                                id="criteria-bar",
-                                responsive=True,
-                                config=RESPONSIVE_GRAPH_CONFIG,
-                                style=FILL_GRAPH_STYLE,
-                            ),
-                        ]),
-                        html.Div(
-                            style={
-                                **CARD_STYLE,
-                                "marginBottom": 0,
-                                "minWidth": 0,
-                                "minHeight": 0,
-                                "flex": "1 1 0",
-                                "display": "flex",
-                                "flexDirection": "column",
-                            },
-                            children=[
-                            html.P("Average score per criterion", style=SECTION_LABEL),
-                            dcc.RadioItems(
-                                id="radar-split-mode",
-                                options=[
-                                    {"label": "Overall", "value": "overall"},
-                                    {"label": "Split by group", "value": "group"},
-                                    {"label": "Split by use case", "value": "use_case"},
-                                ],
-                                value="group",
-                                inline=True,
-                                style={"fontSize": "12px", "color": "#374151", "marginBottom": "8px"},
-                                labelStyle={"marginRight": "14px"},
-                            ),
-                            dcc.Graph(
-                                id="all-scores-radar-chart",
-                                responsive=True,
-                                config=RESPONSIVE_GRAPH_CONFIG,
-                                style=FILL_GRAPH_STYLE,
-                            ),
-                        ]),
+                        html.P("Average Score per Criterion", style=SECTION_LABEL),
+                        dcc.RadioItems(
+                            id="radar-split-mode",
+                            options=[
+                                {"label": "Overall", "value": "overall"},
+                                {"label": "Split by theme", "value": "group"},
+                                {"label": "Split by use case", "value": "use_case"},
+                            ],
+                            value="group",
+                            inline=True,
+                            style={"fontSize": BODY_TEXT_SIZE, "color": "#374151", "marginBottom": "8px"},
+                            labelStyle={"marginRight": "14px"},
+                        ),
+                        dcc.Graph(
+                            id="all-scores-radar-chart",
+                            responsive=True,
+                            config=RESPONSIVE_GRAPH_CONFIG,
+                            style=FILL_GRAPH_STYLE,
+                        ),
                     ],
                 ),
             ],
@@ -567,7 +605,7 @@ app.layout = html.Div(
         # ── Agreement heatmap ──────────────────────────────────────────────
         html.Div(style=CARD_STYLE, children=[
             html.P(
-                "Score heatmap per use case by criterion",
+                "Score Heatmap per Use Case by Criterion",
                 style=SECTION_LABEL,
             ),
             html.Div(
@@ -579,12 +617,15 @@ app.layout = html.Div(
                         dcc.Dropdown(
                             id="heatmap-sort-by",
                             options=(
-                                [{"label": "Average score", "value": "avg"}] +
-                                [{"label": c, "value": c} for c in SCORE_COLS] +
-                                [{"label": "Total", "value": "Total"}]
+                                [
+                                    {"label": "Total Score", "value": "Total"},
+                                    {"label": "Criterion Score SD", "value": "SD"},
+                                    {"label": "Criterion Score Range", "value": "Range"},
+                                ] +
+                                [{"label": c, "value": c} for c in SCORE_COLS]
                             ),
-                            value="avg", clearable=False,
-                            style={"width": "180px", "fontSize": "12px"},
+                            value="Total", clearable=False,
+                            style={"width": "210px", "fontSize": BODY_TEXT_SIZE},
                         ),
                     ]),
                     html.Div([
@@ -596,7 +637,7 @@ app.layout = html.Div(
                                 {"label": "Ascending",  "value": "asc"},
                             ],
                             value="desc", clearable=False,
-                            style={"width": "130px", "fontSize": "12px"},
+                            style={"width": "130px", "fontSize": BODY_TEXT_SIZE},
                         ),
                     ]),
                 ],
@@ -606,7 +647,7 @@ app.layout = html.Div(
 
         # ── Stats table ────────────────────────────────────────────────────
         html.Div(style=CARD_STYLE, children=[
-            html.P("Summary table - scores per use case across groups", style=SECTION_LABEL),
+            html.P("Summary Table - Scores per Use Case Across Themes", style=SECTION_LABEL),
             html.Div(
                 style={"display": "flex", "gap": "12px", "marginBottom": "10px",
                        "alignItems": "flex-end"},
@@ -616,17 +657,18 @@ app.layout = html.Div(
                         dcc.Dropdown(
                             id="table-sort-by",
                             options=(
-                                [{"label": "Total", "value": "Total"}] +
+                                [
+                                    {"label": "Overall rank", "value": "Overall rank"},
+                                    {"label": "Theme rank", "value": "Theme rank"},
+                                    {"label": "Total", "value": "Total"},
+                                ] +
                                 [{"label": c, "value": c} for c in SCORE_COLS] +
                                 [
-                                    {"label": "SD", "value": "SD"},
-                                    {"label": "Range", "value": "Range"},
-                                    {"label": "Use case", "value": "Use case"},
-                                    {"label": "Group", "value": "Group"},
+                                    {"label": "Theme", "value": "Theme"},
                                 ]
                             ),
                             value="Total", clearable=False,
-                            style={"width": "120px", "fontSize": "12px"},
+                            style={"width": "120px", "fontSize": BODY_TEXT_SIZE},
                         ),
                     ]),
                     html.Div([
@@ -638,12 +680,12 @@ app.layout = html.Div(
                                 {"label": "Ascending",  "value": "asc"},
                             ],
                             value="desc", clearable=False,
-                            style={"width": "130px", "fontSize": "12px"},
+                            style={"width": "130px", "fontSize": BODY_TEXT_SIZE},
                         ),
                     ]),
                 ],
             ),
-            dcc.Graph(id="stats-table", style={"height": "600px"}),
+            html.Div(id="stats-table"),
         ]),
 
         # ── Footer ─────────────────────────────────────────────────────────
@@ -652,6 +694,7 @@ app.layout = html.Div(
             children=[html.Img(src=LOGO_SRC, style={"maxHeight": "80px", "objectFit": "contain"})]
             if LOGO_SRC else [],
         ),
+
     ],
 )
 
@@ -712,18 +755,37 @@ def leaderboard(partners_sel, groups_sel, use_cases_sel, active_groups,
     df = apply_filters(
         partners_sel, groups_sel, use_cases_sel, active_groups, top_n, top_n_mode
     )
-    grp = df.groupby(["Use Case Short", "Group"])["Total"]
+    grp = df.groupby(["Use Case Short", "Group"])
+    criterion_means = grp[SCORE_COLS].mean()
     stats = pd.DataFrame({
-        "Total": grp.mean(),
-        "Min":   grp.min(),
-        "Max":   grp.max(),
-        "SD":    grp.std(),
-        "Range": grp.max() - grp.min(),
+        "Total": grp["Total"].mean(),
+        "SD": criterion_means.std(axis=1),
+        "Range": criterion_means.max(axis=1) - criterion_means.min(axis=1),
     }).reset_index()
+    policy_questions = (
+        df.groupby(["Use Case Short", "Group"])["Policy Question"]
+        .apply(policy_questions_for_hover)
+        .rename("Policy questions")
+        .reset_index()
+    )
+    stats = stats.merge(policy_questions, on=["Use Case Short", "Group"], how="left")
     stats["SD"] = stats["SD"].fillna(0)
 
-    # For horizontal bar charts, sort ascending so highest value appears at the top
-    stats = stats.sort_values(sort_by, ascending=(order == "desc"))
+    # For horizontal bar charts, category order must be unique per use case.
+    # Plotly collapses duplicate y labels across themes, so sorting the raw
+    # theme/use-case rows can make ascending and descending appear identical.
+    use_case_order = (
+        stats.groupby("Use Case Short")[sort_by]
+        .mean()
+        .sort_values(ascending=(order == "desc"))
+        .index
+        .tolist()
+    )
+    stats = stats.sort_values(
+        ["Use Case Short", "Group"],
+        key=lambda s: s.map({value: index for index, value in enumerate(use_case_order)})
+        if s.name == "Use Case Short" else s.map(sort_key),
+    )
 
     fig = go.Figure()
     for group in sorted(stats["Group"].unique(), key=sort_key):
@@ -733,37 +795,45 @@ def leaderboard(partners_sel, groups_sel, use_cases_sel, active_groups,
             x=group_stats["Total"],
             name=group,
             orientation="h",
+            width=0.86,
             marker_color=GROUP_COLOUR_MAP.get(group, "#CCCCCC"),
             hovertemplate=(
-                "%{y}<br>Group: %{fullData.name}<br>"
-                "Total: %{x:.2f}<br>"
-                "Min: %{customdata[0]:.2f}  "
-                "Max: %{customdata[1]:.2f}  "
-                "Range: %{customdata[2]:.2f}  "
-                "SD: %{customdata[3]:.2f}<extra></extra>"
+                "%{y}<br>Theme: %{fullData.name}<br>"
+                "Total Score: %{x:.2f}<br><br>"
+                "Policy Questions:<br>%{customdata}<extra></extra>"
             ),
-            customdata=list(zip(
-                group_stats["Min"], group_stats["Max"], group_stats["Range"], group_stats["SD"]
-            )),
+            customdata=group_stats["Policy questions"],
         ))
     fig.update_layout(
-        xaxis_title="Total score",
+        xaxis_title="Total Score",
         yaxis_title=None,
         showlegend=True,
-        legend_title="Group",
+        legend_title="Theme",
+        bargap=0.46,
+        bargroupgap=0.22,
+        hoverlabel=dict(font_size=16),
         legend=dict(
             orientation="h",
             yanchor="bottom",
             y=1.02,
             xanchor="left",
             x=0,
+            font=dict(size=16),
+            title_font=dict(size=16),
         ),
-        margin=dict(l=0, r=20, t=50, b=40),
+        margin=dict(l=260, r=20, t=50, b=40),
         plot_bgcolor="#ffffff",
         paper_bgcolor="#ffffff",
+        font=dict(size=16),
     )
     fig.update_xaxes(range=[0, 25], dtick=5, gridcolor="#f3f4f6")
-    fig.update_yaxes(categoryorder="array", categoryarray=stats["Use Case Short"].tolist())
+    fig.update_yaxes(
+        categoryorder="array",
+        categoryarray=use_case_order,
+        automargin=True,
+        ticklabelposition="outside left",
+        tickfont=dict(size=16),
+    )
     return fig
 
 
@@ -791,7 +861,7 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
     fig = go.Figure()
     if split_mode in {"group", "use_case"}:
         series_col = "Group" if split_mode == "group" else "Use Case Short"
-        legend_title = "Group" if split_mode == "group" else "Use case"
+        legend_title = "Theme" if split_mode == "group" else "Use case"
         stats = (
             melted.groupby([series_col, "Criterion"])["Score"]
             .agg(mean="mean", min="min", max="max")
@@ -815,6 +885,7 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
                 x=group_stats["Criterion"],
                 y=group_stats["mean"],
                 name=series_value,
+                width=0.2,
                 error_y=dict(
                     type="data",
                     symmetric=False,
@@ -837,7 +908,7 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
         showlegend = True
         barmode = "group"
     else:
-        legend_title = "Group"
+        legend_title = "Theme"
         stats = (
             melted.groupby("Criterion")["Score"]
             .agg(mean="mean", min="min", max="max")
@@ -847,7 +918,8 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
         fig.add_trace(go.Bar(
             x=stats["Criterion"],
             y=stats["mean"],
-            marker_color=[CRITERION_COLOURS[c] for c in stats["Criterion"]],
+            marker_color=CRITERION_COLOURS["Data Availability"],
+            width=0.72,
             error_y=dict(
                 type="data",
                 symmetric=False,
@@ -871,7 +943,9 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
     fig.update_layout(
         autosize=True,
         barmode=barmode,
-        yaxis=dict(range=[0, 5], title="Mean score (1–5)"),
+        bargap=0.12,
+        bargroupgap=0.04,
+        yaxis=dict(range=[0, 5], title="Mean Score (1–5)"),
         showlegend=showlegend,
         legend_title=legend_title,
         legend=dict(
@@ -884,6 +958,7 @@ def criteria_bar(split_mode, partners_sel, groups_sel, use_cases_sel, active_gro
         margin=dict(l=0, r=0, t=50, b=40),
         plot_bgcolor="#ffffff",
         paper_bgcolor="#ffffff",
+        font=dict(size=16),
     )
     fig.update_yaxes(gridcolor="#f3f4f6")
     return fig
@@ -915,7 +990,7 @@ def all_scores_deep_dive(split_mode, partners_sel, groups_sel, use_cases_sel, ac
         radar_fig.add_trace(go.Scatterpolar(
             r=values, theta=SCORE_COLS + [SCORE_COLS[0]],
             name="Overall", fill="toself", opacity=0.5,
-            line_color="#3b82f6",
+            line_color=CRITERION_COLOURS["Data Availability"],
         ))
         legend_title = None
     elif split_mode == "use_case":
@@ -940,7 +1015,7 @@ def all_scores_deep_dive(split_mode, partners_sel, groups_sel, use_cases_sel, ac
                 name=group, fill="toself", opacity=0.5,
                 line_color=GROUP_COLOUR_MAP.get(group, "#CCCCCC"),
             ))
-        legend_title = "Group"
+        legend_title = "Theme"
 
     radar_fig.update_layout(
         autosize=True,
@@ -953,19 +1028,20 @@ def all_scores_deep_dive(split_mode, partners_sel, groups_sel, use_cases_sel, ac
                 rotation=RADAR_ROTATION_DEGREES,
                 gridcolor="#000000",
                 linecolor="#000000",
-                tickfont=dict(color="#000000"),
+                tickfont=dict(color="#000000", size=16),
             ),
             radialaxis=dict(
                 visible=True,
                 range=[0, 5],
                 gridcolor="#000000",
                 linecolor="#000000",
-                tickfont=dict(color="#000000"),
+                tickfont=dict(color="#000000", size=16),
             ),
         ),
         margin=dict(l=20, r=20, t=45, b=10),
         paper_bgcolor="#ffffff",
         legend_title=legend_title,
+        font=dict(size=16),
     )
 
     return radar_fig
@@ -992,8 +1068,10 @@ def agreement_heatmap(partners_sel, groups_sel, use_cases_sel, active_groups,
     means = melted.groupby(["Use Case Short", "Criterion"])["Score"].mean().unstack("Criterion").round(2)
     means = means[SCORE_COLS + ["Total"]]
     ascending = (order == "asc")
-    if sort_by == "avg":
-        sort_key = means[SCORE_COLS].mean(axis=1)
+    if sort_by == "SD":
+        sort_key = means[SCORE_COLS].std(axis=1)
+    elif sort_by == "Range":
+        sort_key = means[SCORE_COLS].max(axis=1) - means[SCORE_COLS].min(axis=1)
     else:
         sort_key = means[sort_by]
     means = means.loc[sort_key.sort_values(ascending=ascending).index]
@@ -1033,7 +1111,7 @@ def agreement_heatmap(partners_sel, groups_sel, use_cases_sel, active_groups,
         y=uc_list,
         text=text_matrix,
         texttemplate="%{text}",
-        textfont=dict(color="black"),
+        textfont=dict(color="black", size=16),
         colorscale=colorscale, zmin=0, zmax=5,
         colorbar=dict(title="Score", tickvals=[1,2,3,4,5]),
         hovertemplate="Use case: %{y}<br>%{x}<br>%{text}<extra></extra>",
@@ -1042,18 +1120,23 @@ def agreement_heatmap(partners_sel, groups_sel, use_cases_sel, active_groups,
         tickvals=[x_total] + x_crit,
         ticktext=["Total"] + SCORE_COLS,
         tickangle=0,
-        tickfont=dict(size=12),
+        tickfont=dict(size=16),
     )
     fig.update_layout(
-        margin=dict(l=0, r=0, t=20, b=40),
+        margin=dict(l=260, r=0, t=20, b=40),
         paper_bgcolor="#ffffff",
-        yaxis=dict(tickfont=dict(size=12)),
+        yaxis=dict(
+            tickfont=dict(size=16),
+            automargin=True,
+            ticklabelposition="outside left",
+        ),
+        font=dict(size=16),
     )
     return fig
 
 
 @app.callback(
-    Output("stats-table", "figure"),
+    Output("stats-table", "children"),
     Input("partner-filter", "value"),
     Input("group-filter", "value"),
     Input("usecase-filter", "value"),
@@ -1069,31 +1152,97 @@ def stats_table(partners_sel, groups_sel, use_cases_sel, active_groups,
         partners_sel, groups_sel, use_cases_sel, active_groups, top_n, top_n_mode
     )
     if df.empty:
-        return go.Figure()
+        return html.P(
+            "No matching rows.",
+            style={"color": "#6b7280", "fontSize": BODY_TEXT_SIZE, "margin": "8px 0"},
+        )
 
-    tbl = df[["Group", "Use Case Short"] + SCORE_COLS + ["Total"]].copy()
-    tbl["SD"] = tbl[SCORE_COLS].std(axis=1).round(2)
-    tbl["Range"] = (tbl[SCORE_COLS].max(axis=1) - tbl[SCORE_COLS].min(axis=1)).round(2)
+    tbl = df[["Group", "Use Case Short", "Policy Question"] + SCORE_COLS + ["Total"]].copy()
     for col in SCORE_COLS + ["Total"]:
         tbl[col] = tbl[col].round(2)
-    tbl = tbl.rename(columns={"Use Case Short": "Use case"})
-    tbl = tbl[["Group", "Use case"] + SCORE_COLS + ["Total", "SD", "Range"]]
+    tbl = tbl.rename(columns={
+        "Group": "Theme",
+        "Use Case Short": "Use case",
+        "Policy Question": "Policy question",
+    })
+    tbl["Overall rank"] = tbl["Total"].rank(method="dense", ascending=False).astype(int)
+    tbl["Theme rank"] = (
+        tbl.groupby("Theme")["Total"]
+        .rank(method="dense", ascending=False)
+        .astype(int)
+    )
+    tbl["Policy question"] = tbl["Policy question"].fillna("").map(separate_policy_questions)
+    tbl = tbl[
+        ["Theme", "Use case", "Policy question"] +
+        SCORE_COLS + ["Total", "Overall rank", "Theme rank"]
+    ]
     tbl = tbl.sort_values(
         sort_by,
         ascending=(order == "asc"),
-        key=lambda s: s.map(sort_key) if s.name == "Group" else s,
+        key=lambda s: s.map(sort_key) if s.name == "Theme" else s,
     )
-    fig = go.Figure(go.Table(
-        header=dict(values=list(tbl.columns), fill_color="#3b82f6",
-                    font=dict(color="white", size=12), align="left"),
-        cells=dict(
-            values=[tbl[c] for c in tbl.columns],
-            fill_color=[["#f9fafb" if i % 2 == 0 else "#ffffff" for i in range(len(tbl))]],
-            align="left", font=dict(size=11),
-        ),
-    ))
-    fig.update_layout(margin=dict(l=0, r=0, t=10, b=10), paper_bgcolor="#ffffff")
-    return fig
+    columns = [{"name": col, "id": col} for col in tbl.columns]
+    compact_score_columns = SCORE_COLS + ["Total", "Overall rank", "Theme rank"]
+
+    return dash_table.DataTable(
+        data=tbl.to_dict("records"),
+        columns=columns,
+        page_action="none",
+        style_table={"overflowX": "auto", "maxHeight": "820px", "overflowY": "auto"},
+        style_cell={
+            "fontFamily": "Inter, sans-serif",
+            "fontSize": f"{TABLE_TEXT_SIZE}px",
+            "padding": "8px",
+            "textAlign": "left",
+            "whiteSpace": "normal",
+            "height": "auto",
+            "lineHeight": "1.35",
+        },
+        style_header={
+            "backgroundColor": "#3b82f6",
+            "color": "white",
+            "fontWeight": "600",
+            "whiteSpace": "normal",
+            "height": "auto",
+        },
+        style_data_conditional=[
+            {"if": {"row_index": "even"}, "backgroundColor": "#f9fafb"},
+            {"if": {"row_index": "odd"}, "backgroundColor": "#ffffff"},
+            *[
+                {
+                    "if": {
+                        "filter_query": f'{{Theme}} = "{datatable_filter_text(theme)}"',
+                        "column_id": "Theme",
+                    },
+                    "backgroundColor": GROUP_COLOUR_MAP.get(theme, "#CCCCCC"),
+                    "color": text_colour_for_background(GROUP_COLOUR_MAP.get(theme, "#CCCCCC")),
+                    "fontWeight": "600",
+                }
+                for theme in groups
+            ],
+        ],
+        style_cell_conditional=[
+            {"if": {"column_id": "Theme"}, "width": "7%", "minWidth": "70px", "maxWidth": "90px"},
+            {"if": {"column_id": "Use case"}, "width": "21%", "minWidth": "220px", "maxWidth": "340px"},
+            {
+                "if": {"column_id": "Policy question"},
+                "width": "34%",
+                "minWidth": "320px",
+                "maxWidth": "560px",
+                "whiteSpace": "pre-line",
+            },
+            *[
+                {
+                    "if": {"column_id": col},
+                    "width": "5%",
+                    "minWidth": "58px",
+                    "maxWidth": "76px",
+                    "textAlign": "center",
+                }
+                for col in compact_score_columns
+            ],
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------
