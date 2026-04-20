@@ -1,5 +1,5 @@
 """
-FMoH use case prioritisation dashboard
+MoH use case prioritisation dashboard
 Compares scores across groups for use cases on 5 criteria.
 Run with: python dash_app_render_ready.py
 """
@@ -84,7 +84,7 @@ DEFAULT_LAN_PORT = 8080
 
 def build_parser():
     parser = __import__("argparse").ArgumentParser(
-        description="FMoH use case prioritisation dashboard"
+        description="MoH use case prioritisation dashboard"
     )
     parser.add_argument("--data_dir", "-d", default=os.path.dirname(__file__),
                         help="Directory containing group xlsx files (default: script directory)")
@@ -374,7 +374,7 @@ TOP_ROW_STYLE = {
     "alignItems": "stretch",
 }
 
-app = dash.Dash(__name__, title="FMoH prioritisation dashboard")
+app = dash.Dash(__name__, title="MoH prioritisation dashboard")
 server = app.server
 
 # ---------------------------------------------------------------------------
@@ -418,7 +418,7 @@ app.layout = html.Div(
     style={"fontFamily": "Inter, sans-serif", "backgroundColor": "#f3f4f6",
            "minHeight": "100vh", "padding": "24px"},
     children=[
-        html.H1("FMoH use case prioritisation",
+        html.H1("MoH use case prioritisation",
                 style={"color": "#111827", "marginBottom": "4px", "textAlign": "center"}),
         html.P(f"{len(use_cases)} use cases · {len(groups)} themes · scores 1–5 per criterion",
                style={"color": "#6b7280", "fontSize": BODY_TEXT_SIZE, "marginBottom": "16px"}),
